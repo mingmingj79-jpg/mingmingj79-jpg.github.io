@@ -1276,7 +1276,7 @@ async function callGPT(systemPrompt, userPrompt){
 // ---------- Gemini API call (real, may hit CORS) ----------
 async function callGemini(systemPrompt, userPrompt, useSearch){
   if(!geminiKey) return { error: 'NO_KEY' };
-  const model = perfMode === 'flagship' ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+  const model = perfMode === 'flagship' ? 'gemini-2.0-flash' : 'gemini-1.5-flash';
   try{
     const body = {
       contents: [{ parts: [{ text: systemPrompt + "\n\n" + userPrompt }] }]
@@ -1323,14 +1323,14 @@ function errorMessage(roleLabel, result){
 // ---------- system prompts ----------
 function buildSystemPrompt(role){
   const base = {
-    gpt: "너는 'AI 임원회의실'의 재무이사다. 회장 전창민(매일유업 검단대리점 운영)에게 보고하듯, 비용/ROI/리스크/사업성 관점에서 분석하라. 손익, 투자 분석, 우유대리점 경영 관점을 우선 고려하라.",
-    claude: "너는 'AI 임원회의실'의 개발이사다. 회장 전창민에게 보고하듯, 시스템 설계/코드/기술적 실현 가능성 관점에서 분석하라.",
-    gemini: "너는 'AI 임원회의실'의 정보이사다. 회장 전창민에게 보고하듯, 최신 시장 동향/뉴스/경쟁사 정보 관점에서 분석하라."
+    gpt: "귀하는 'AI 임원회의실'의 재무이사입니다. 회장 전창민(매일유업 검단대리점 운영) 회장님께 보고드리듯, 비용/ROI/리스크/사업성 관점에서 분석해 드리겠습니다. 손익, 투자 분석, 우유대리점 경영 관점을 우선 고려하여 보고드립니다.",
+    claude: "귀하는 'AI 임원회의실'의 개발이사입니다. 전창민 회장님께 보고드리듯, 시스템 설계/코드/기술적 실현 가능성 관점에서 분석해 드리겠습니다.",
+    gemini: "귀하는 'AI 임원회의실'의 정보이사입니다. 전창민 회장님께 보고드리듯, 최신 시장 동향/뉴스/경쟁사 정보 관점에서 분석해 드리겠습니다."
   };
   const auditNote = (role === 'gpt' || role === 'claude')
-    ? " 답변 마지막 줄에는 반드시 '[자체 감사] '로 시작하는 한 줄을 추가하여, 본인 의견에 숨은 리스크나 불확실한 가정이 있는지 스스로 짧게 검토평을 남겨라."
+    ? " 답변 마지막 줄에는 반드시 '[자체 감사] '로 시작하는 한 줄을 추가하여, 본인 의견에 숨은 리스크나 불확실한 가정이 있는지 스스로 짧게 검토평을 남겨드리겠습니다."
     : "";
-  return base[role] + " " + MODE_CONTEXT[currentMode] + " 답변은 한국어로, 3~5문장 내로 간결하게 핵심만 보고하라. 너무 격식체로 늘어지지 말고 임원 보고서 톤을 유지하라." + auditNote;
+  return base[role] + " " + MODE_CONTEXT[currentMode] + " 답변은 한국어로, 3~5문장 내로 간결하게 핵심만 보고드리겠습니다. 임원 보고서 톤으로 회장님께 존댓말로 보고드리겠습니다." + auditNote;
 }
 
 // ---------- main orchestration ----------
@@ -1434,7 +1434,7 @@ ${answers.gemini}
 
   try{
     const conclusion = await callClaude(
-      "너는 'AI 임원회의실'의 수석 간사다. 세 임원의 의견을 객관적으로 종합해 회장이 바로 결정할 수 있는 보고서를 작성한다. 추측을 사실처럼 말하지 않고, 불확실한 부분은 명시한다.",
+      "귀하는 'AI 임원회의실'의 수석 간사입니다. 세 임원의 의견을 객관적으로 종합하여 전창민 회장님께서 바로 의사결정을 내리실 수 있도록 보고서를 작성해 드립니다. 추측을 사실처럼 말씀드리지 않으며, 불확실한 부분은 명시해 드리겠습니다.",
       summaryPrompt
     );
     conclusionCard.querySelector('.body').classList.remove('empty');
