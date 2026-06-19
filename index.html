@@ -1038,9 +1038,19 @@ const micBtn = document.getElementById('micBtn');
 
 // ---------- storage helpers ----------
 async function loadKeys(){
-  try{ const g = localStorage.getItem('exec-room:gpt-key'); if(g) gptKey = g; }catch(e){}
-  try{ const g2 = localStorage.getItem('exec-room:gemini-key'); if(g2) geminiKey = g2; }catch(e){}
-  try{ const g3 = localStorage.getItem('exec-room:claude-key'); if(g3) claudeKey = g3; }catch(e){}
+  try{ 
+    const g = localStorage.getItem('exec-room:gpt-key'); 
+    if(g && g.length > 10) gptKey = g;
+    const g2 = localStorage.getItem('exec-room:gemini-key'); 
+    if(g2 && g2.length > 10) geminiKey = g2;
+    const g3 = localStorage.getItem('exec-room:claude-key'); 
+    if(g3 && g3.length > 10) claudeKey = g3;
+    console.log('[loadKeys] GPT:', gptKey ? '✅로드됨' : '❌없음', 
+                'Gemini:', geminiKey ? '✅로드됨' : '❌없음',
+                'Claude:', claudeKey ? '✅로드됨' : '❌없음');
+  }catch(e){ 
+    console.error('[loadKeys] localStorage 접근 실패:', e); 
+  }
   updateKeyStatus();
 }
 function updateKeyStatus(){
@@ -1154,10 +1164,27 @@ document.getElementById('saveKeys').addEventListener('click', async ()=>{
   gptKey = document.getElementById('gptKey').value.trim();
   geminiKey = document.getElementById('geminiKey').value.trim();
   claudeKey = document.getElementById('claudeKey').value.trim();
-  try{ localStorage.setItem('exec-room:gpt-key', gptKey); }catch(e){}
-  try{ localStorage.setItem('exec-room:gemini-key', geminiKey); }catch(e){}
-  try{ localStorage.setItem('exec-room:claude-key', claudeKey); }catch(e){}
+  let saveOk = true;
+  try{ 
+    localStorage.setItem('exec-room:gpt-key', gptKey);
+    localStorage.setItem('exec-room:gemini-key', geminiKey);
+    localStorage.setItem('exec-room:claude-key', claudeKey);
+    // 저장 확인
+    const verify = localStorage.getItem('exec-room:gpt-key');
+    if(verify !== gptKey) saveOk = false;
+  }catch(e){ 
+    saveOk = false;
+    console.error('localStorage 저장 실패:', e);
+    alert('⚠ 키 저장 실패: ' + e.message + '\n\n시크릿 모드이거나 브라우저 저장소가 차단된 상태입니다.');
+  }
   updateKeyStatus();
+  if(saveOk){
+    const btn = document.getElementById('saveKeys');
+    const orig = btn.textContent;
+    btn.textContent = '✅ 저장 완료!';
+    btn.style.background = '#2e7d4f';
+    setTimeout(()=>{ btn.textContent = orig; btn.style.background = ''; }, 1500);
+  }
   settingsOverlay.classList.remove('open');
 });
 
