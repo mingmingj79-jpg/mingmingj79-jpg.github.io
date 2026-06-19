@@ -775,6 +775,7 @@ body.has-dock{ padding-bottom: 140px; }
 .history-item .h-date{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--ink-soft); margin-top:3px;}
 .history-empty{ text-align:center; color:var(--ink-soft); font-size:12.5px; padding: 30px 0; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -1216,12 +1217,32 @@ fileInput.addEventListener('change', async (e)=>{
 async function processFile(file){
   return new Promise((resolve)=>{
     const reader = new FileReader();
+    const isExcel = file.name.match(/\.(xlsx|xls|csv)$/i);
     if(file.type.startsWith('image/')){
       reader.onload = (e)=>{
         attachedFileData.push({ name: file.name, type: 'image', dataUrl: e.target.result });
         resolve();
       };
       reader.readAsDataURL(file);
+    } else if(isExcel){
+      reader.onload = (e)=>{
+        try{
+          const wb = XLSX.read(e.target.result, { type: 'array' });
+          let text = '';
+          wb.SheetNames.forEach(sheetName => {
+            const ws = wb.Sheets[sheetName];
+            const csv = XLSX.utils.sheet_to_csv(ws, { skipHidden: true });
+            // 빈 행 제거
+            const lines = csv.split('\n').filter(l => l.replace(/,/g,'').trim().length > 0);
+            text += '[시트: ' + sheetName + ']\n' + lines.join('\n') + '\n\n';
+          });
+          attachedFileData.push({ name: file.name, type: 'text', text: text.slice(0, 8000) });
+        }catch(e2){
+          attachedFileData.push({ name: file.name, type: 'text', text: '[엑셀 파싱 실패: ' + e2.message + ']' });
+        }
+        resolve();
+      };
+      reader.readAsArrayBuffer(file);
     } else {
       reader.onload = (e)=>{
         attachedFileData.push({ name: file.name, type: 'text', text: e.target.result });
