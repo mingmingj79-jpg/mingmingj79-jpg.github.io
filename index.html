@@ -1101,19 +1101,14 @@ function escapeHtml(s){
 }
 function renderMarkdown(text){
   let h = escapeHtml(text);
-  // 헤더
   h = h.replace(/^### (.+)$/gm, '<b style="font-size:13.5px;color:var(--ink)">$1</b>');
   h = h.replace(/^## (.+)$/gm, '<b style="font-size:14px;color:var(--ink)">$1</b>');
   h = h.replace(/^# (.+)$/gm, '<b style="font-size:15px;color:var(--ink)">$1</b>');
-  // 굵게
   h = h.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
   h = h.replace(/\*(.+?)\*/g, '<i>$1</i>');
-  // 수평선
   h = h.replace(/^---+$/gm, '<hr style="border:none;border-top:1px solid var(--rule);margin:8px 0">');
-  // 줄바꿈
-  h = h.replace(/\n/g, '<br>');
-  h = h.replace(/
-/g, '<br>');
+  h = h.split('
+').join('<br>');
   return h;
 }
 
