@@ -577,6 +577,33 @@ body.has-dock{ padding-bottom: 140px; }
 .refdata-panel .hint2{
   font-size:10px; color: var(--ink-soft); margin-top:5px; line-height:1.5;
 }
+/* 파일 첨부 */
+.attach-btn{
+  background:none; border:1px solid var(--rule);
+  border-radius:8px; padding:5px 10px;
+  font-size:11.5px; color:var(--ink-soft);
+  cursor:pointer; margin-top:8px;
+  font-family:'JetBrains Mono',monospace;
+}
+.attach-btn:hover{ border-color:var(--green); color:var(--green); }
+.attached-files{
+  display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;
+}
+.attached-file{
+  display:flex; align-items:center; gap:4px;
+  background:var(--paper-dim); border:1px solid var(--rule);
+  border-radius:6px; padding:3px 8px;
+  font-size:11px; color:var(--ink);
+}
+.attached-file .rm{
+  cursor:pointer; color:var(--ink-soft); font-size:13px; line-height:1;
+  margin-left:2px;
+}
+.img-preview{
+  max-width:100%; max-height:180px;
+  border-radius:8px; margin-top:6px;
+  border:1px solid var(--rule);
+}
 .dock textarea{
   flex:1; resize:none; border:none; outline:none;
   background:transparent; color: var(--ink);
@@ -835,7 +862,10 @@ body.has-dock{ padding-bottom: 140px; }
 <div class="refdata-panel" id="refdataPanel">
   <label>안건과 함께 전달할 참고 데이터 (선택)</label>
   <textarea id="refdataInput" placeholder="예: MaeilPRM 미수금 현황, 거래처 매출 데이터 등을 직접 붙여넣으세요"></textarea>
-  <div class="hint2">현재는 직접 붙여넣는 방식만 지원합니다. 입력하면 모든 임원의 답변 프롬프트에 함께 전달됩니다. (향후 MaeilPRM 자동 연동 확장 예정)</div>
+  <div class="hint2">텍스트를 붙여넣거나 이미지/파일을 첨부하세요. 모든 임원의 답변 프롬프트에 함께 전달됩니다.</div>
+  <button class="attach-btn" id="attachBtn">📁 이미지 / 파일 첨부</button>
+  <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.xlsx,.xls" multiple style="display:none">
+  <div class="attached-files" id="attachedFiles"></div>
 </div>
 
 <div class="dock">
@@ -917,18 +947,9 @@ const micBtn = document.getElementById('micBtn');
 
 // ---------- storage helpers ----------
 async function loadKeys(){
-  try{
-    const g = await window.storage.get('exec-room:gpt-key');
-    if(g) gptKey = g.value;
-  }catch(e){}
-  try{
-    const g2 = await window.storage.get('exec-room:gemini-key');
-    if(g2) geminiKey = g2.value;
-  }catch(e){}
-  try{
-    const g3 = await window.storage.get('exec-room:claude-key');
-    if(g3) claudeKey = g3.value;
-  }catch(e){}
+  try{ const g = localStorage.getItem('exec-room:gpt-key'); if(g) gptKey = g; }catch(e){}
+  try{ const g2 = localStorage.getItem('exec-room:gemini-key'); if(g2) geminiKey = g2; }catch(e){}
+  try{ const g3 = localStorage.getItem('exec-room:claude-key'); if(g3) claudeKey = g3; }catch(e){}
   updateKeyStatus();
 }
 function updateKeyStatus(){
@@ -945,23 +966,18 @@ function updateKeyStatus(){
 async function saveMeetingRecord(record){
   try{
     const key = 'exec-room:meeting:' + record.id;
-    await window.storage.set(key, JSON.stringify(record));
+    localStorage.setItem(key, JSON.stringify(record));
   }catch(e){ console.error('save failed', e); }
 }
 async function loadHistory(){
   const listEl = document.getElementById('historyList');
   try{
-    const res = await window.storage.list('exec-room:meeting:');
-    if(!res || !res.keys || res.keys.length===0){
-      listEl.innerHTML = '<div class="history-empty">아직 저장된 회의록이 없습니다.</div>';
-      return;
-    }
     const records = [];
-    for(const k of res.keys){
-      try{
-        const r = await window.storage.get(k);
-        if(r) records.push(JSON.parse(r.value));
-      }catch(e){}
+    for(let i=0; i<localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith('exec-room:meeting:')){
+        try{ records.push(JSON.parse(localStorage.getItem(k))); }catch(e){}
+      }
     }
     records.sort((a,b)=> b.timestamp - a.timestamp);
     if(records.length===0){
@@ -1010,7 +1026,7 @@ perfToggle.addEventListener('click', (e)=>{
   opt.classList.add('active');
   perfHint.textContent = perfMode === 'flagship'
     ? '최고 성능 · 정확도 우선 · 비용 높음'
-    : '가성비 · gpt-4o-mini / gemini-2.5-flash-lite · 비용 절감';
+    : '가성비 · gpt-4o-mini / gemini-1.5-flash · 비용 절감';
 });
 
 // ---------- settings sheet ----------
@@ -1021,9 +1037,9 @@ document.getElementById('saveKeys').addEventListener('click', async ()=>{
   gptKey = document.getElementById('gptKey').value.trim();
   geminiKey = document.getElementById('geminiKey').value.trim();
   claudeKey = document.getElementById('claudeKey').value.trim();
-  try{ await window.storage.set('exec-room:gpt-key', gptKey); }catch(e){}
-  try{ await window.storage.set('exec-room:gemini-key', geminiKey); }catch(e){}
-  try{ await window.storage.set('exec-room:claude-key', claudeKey); }catch(e){}
+  try{ localStorage.setItem('exec-room:gpt-key', gptKey); }catch(e){}
+  try{ localStorage.setItem('exec-room:gemini-key', geminiKey); }catch(e){}
+  try{ localStorage.setItem('exec-room:claude-key', claudeKey); }catch(e){}
   updateKeyStatus();
   settingsOverlay.classList.remove('open');
 });
@@ -1036,11 +1052,85 @@ refdataToggleBtn.addEventListener('click', ()=>{
   refdataPanel.classList.toggle('open');
 });
 refdataInput.addEventListener('input', ()=>{
-  refdataToggleBtn.classList.toggle('has-data', refdataInput.value.trim().length > 0);
-  refdataToggleBtn.textContent = refdataInput.value.trim().length > 0
-    ? '📎 참고 데이터 첨부됨 (탭하여 수정)'
-    : '📎 참고 데이터 첨부 (PRM 등)';
+  updateRefdataBtn();
 });
+
+// 파일 첨부
+let attachedFileData = []; // { name, type, dataUrl, text }
+
+function updateRefdataBtn(){
+  const hasText = refdataInput.value.trim().length > 0;
+  const hasFile = attachedFileData.length > 0;
+  refdataToggleBtn.classList.toggle('has-data', hasText || hasFile);
+  if(hasText || hasFile){
+    refdataToggleBtn.textContent = `📎 참고 데이터 첨부됨 (${attachedFileData.length}개 파일) (탭하여 수정)`;
+  } else {
+    refdataToggleBtn.textContent = '📎 참고 데이터 첨부 (PRM 등)';
+  }
+}
+
+const attachBtn = document.getElementById('attachBtn');
+const fileInput = document.getElementById('fileInput');
+const attachedFilesEl = document.getElementById('attachedFiles');
+
+attachBtn.addEventListener('click', ()=> fileInput.click());
+
+fileInput.addEventListener('change', async (e)=>{
+  const files = Array.from(e.target.files);
+  for(const file of files){
+    await processFile(file);
+  }
+  fileInput.value = '';
+  renderAttachedFiles();
+  updateRefdataBtn();
+});
+
+async function processFile(file){
+  return new Promise((resolve)=>{
+    const reader = new FileReader();
+    if(file.type.startsWith('image/')){
+      reader.onload = (e)=>{
+        attachedFileData.push({ name: file.name, type: 'image', dataUrl: e.target.result });
+        resolve();
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = (e)=>{
+        attachedFileData.push({ name: file.name, type: 'text', text: e.target.result });
+        resolve();
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+  });
+}
+
+function renderAttachedFiles(){
+  attachedFilesEl.innerHTML = attachedFileData.map((f, i) => `
+    <div class="attached-file">
+      ${f.type === 'image' ? '🖼' : '📄'} ${escapeHtml(f.name)}
+      <span class="rm" onclick="removeFile(${i})">×</span>
+    </div>
+    ${f.type === 'image' ? `<br><img class="img-preview" src="${f.dataUrl}" alt="${escapeHtml(f.name)}">` : ''}
+  `).join('');
+}
+
+function removeFile(i){
+  attachedFileData.splice(i, 1);
+  renderAttachedFiles();
+  updateRefdataBtn();
+}
+
+function buildAttachmentContext(){
+  let ctx = '';
+  for(const f of attachedFileData){
+    if(f.type === 'text'){
+      ctx += `\n\n[첨부 파일: ${f.name}]\n${f.text.slice(0, 3000)}`;
+    } else {
+      ctx += `\n\n[첨부 이미지: ${f.name}] (이미지는 텍스트 분석 불가, 파일명만 전달됨)`;
+    }
+  }
+  return ctx;
+}
 
 // ---------- history sheet ----------
 const historyOverlay = document.getElementById('historyOverlay');
@@ -1222,7 +1312,7 @@ function setSeatBody(seat, text, opts={}){
 // ---------- Claude API call (real) ----------
 async function callClaude(systemPrompt, userPrompt){
   const model = perfMode === 'flagship' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
-  const headers = { 
+  const headers = {
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
     "anthropic-dangerous-direct-browser-access": "true"
@@ -1474,7 +1564,8 @@ sendBtn.addEventListener('click', ()=>{
   const q = questionInput.value.trim();
   if(!q || isProcessing) return;
   const refdata = refdataInput.value.trim();
-  const fullQuestion = refdata ? `${q}\n\n[참고 데이터]\n${refdata}` : q;
+  const attachCtx = buildAttachmentContext();
+  const fullQuestion = (refdata || attachCtx) ? `${q}${refdata ? '\n\n[참고 데이터]\n' + refdata : ''}${attachCtx}` : q;
   questionInput.value = '';
   questionInput.style.height = 'auto';
   runMeeting(fullQuestion);
