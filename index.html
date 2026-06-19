@@ -1099,18 +1099,7 @@ async function loadHistory(){
 function escapeHtml(s){
   const d = document.createElement('div'); d.innerText = s; return d.innerHTML;
 }
-function renderMarkdown(text){
-  let h = escapeHtml(text);
-  h = h.replace(/^### (.+)$/gm, '<b style="font-size:13.5px;color:var(--ink)">$1</b>');
-  h = h.replace(/^## (.+)$/gm, '<b style="font-size:14px;color:var(--ink)">$1</b>');
-  h = h.replace(/^# (.+)$/gm, '<b style="font-size:15px;color:var(--ink)">$1</b>');
-  h = h.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-  h = h.replace(/\*(.+?)\*/g, '<i>$1</i>');
-  h = h.replace(/^---+$/gm, '<hr style="border:none;border-top:1px solid var(--rule);margin:8px 0">');
-  h = h.split('
-').join('<br>');
-  return h;
-}
+function renderMarkdown(text){ let h=escapeHtml(text); h=h.replace(/^### (.+)$/gm,"<b>$1</b>"); h=h.replace(/^## (.+)$/gm,"<b>$1</b>"); h=h.replace(/^# (.+)$/gm,"<b>$1</b>"); h=h.replace(/[*][*]([^*]+)[*][*]/g,"<b>$1</b>"); h=h.replace(/[*]([^*]+)[*]/g,"<i>$1</i>"); h=h.replace(/^---+$/gm,"<hr>"); h=h.replace(new RegExp(String.fromCharCode(10),"g"),"<br>"); return h; }
 
 // ---------- mode tabs ----------
 document.getElementById('modeBar').addEventListener('click', (e)=>{
