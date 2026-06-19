@@ -1085,13 +1085,13 @@ async function loadHistory(){
       listEl.innerHTML = '<div class="history-empty">아직 저장된 회의록이 없습니다.</div>';
       return;
     }
-    listEl.innerHTML = records.map(r => `
-      <div class="history-item">
-        <div class="h-top"><span class="tag">${r.mode || '일반회의'}</span></div>
-        <div class="h-q">${escapeHtml(r.title || (r.question ? r.question.slice(0,40) : '회의록'))}</div>
-        <div class="h-date">${new Date(r.timestamp).toLocaleString('ko-KR')} · ${r.history ? r.history.length + '개 발언' : ''}</div>
-      </div>
-    `).join('');
+        listEl.innerHTML = records.map(function(r){
+      var title = r.title || (r.question ? r.question.slice(0,40) : '회의록');
+      var mode = r.mode || '일반회의';
+      var date = new Date(r.timestamp).toLocaleString('ko-KR');
+      var cnt = r.history ? r.history.length + '개 발언' : '';
+      return '<div class="history-item"><div class="h-top"><span class="tag">'+mode+'</span></div><div class="h-q">'+escapeHtml(title)+'</div><div class="h-date">'+date+' · '+cnt+'</div></div>';
+    }).join('');
   }catch(e){
     listEl.innerHTML = '<div class="history-empty">불러오기 실패</div>';
   }
@@ -1233,13 +1233,11 @@ async function processFile(file){
 }
 
 function renderAttachedFiles(){
-  attachedFilesEl.innerHTML = attachedFileData.map((f, i) => `
-    <div class="attached-file">
-      ${f.type === 'image' ? '🖼' : '📄'} ${escapeHtml(f.name)}
-      <span class="rm" onclick="removeFile(${i})">×</span>
-    </div>
-    ${f.type === 'image' ? `<br><img class="img-preview" src="${f.dataUrl}" alt="${escapeHtml(f.name)}">` : ''}
-  `).join('');
+  attachedFilesEl.innerHTML = attachedFileData.map(function(f,i){
+    var icon = f.type === 'image' ? '🖼' : '📄';
+    var preview = f.type === 'image' ? '<br><img class="img-preview" src="'+f.dataUrl+'" alt="'+escapeHtml(f.name)+'">' : '';
+    return '<div class="attached-file">'+icon+' '+escapeHtml(f.name)+'<span class="rm" onclick="removeFile('+i+')">×</span></div>'+preview;
+  }).join('');
 }
 
 function removeFile(i){
