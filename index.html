@@ -1437,9 +1437,9 @@ function createPauseBanner(){
   banner.innerHTML = `
     <div class="pause-label">발언 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
     <div class="pause-btn-row">
-      ${discussMode ? '<button class="continue-btn" id="continueBtn">▶ 토론 이어가기</button>' : ''}
-      <button class="summary-btn" id="summaryBtn">📋 중간 정리</button>
-      <button class="end-btn" id="endMeetingBtn">■ 회의 종료 · 저장</button>
+      ${discussMode ? '<button class="continue-btn js-continue-btn">▶ 토론 이어가기</button>' : ''}
+      <button class="summary-btn js-summary-btn">📋 중간 정리</button>
+      <button class="end-btn js-end-btn">■ 회의 종료 · 저장</button>
     </div>
   `;
   return banner;
@@ -1901,7 +1901,7 @@ async function runMeeting(question, isFollowUp = false){
   chamber.appendChild(banner);
   chamber.scrollTop = chamber.scrollHeight;
 
-  const continueBtnEl = document.getElementById('continueBtn');
+  const continueBtnEl = banner.querySelector('.js-continue-btn');
   if(continueBtnEl){
     continueBtnEl.addEventListener('click', ()=>{
       banner.remove();
@@ -1909,15 +1909,17 @@ async function runMeeting(question, isFollowUp = false){
     });
   }
 
-  document.getElementById('summaryBtn').addEventListener('click', async ()=>{
-    document.getElementById('summaryBtn').disabled = true;
-    document.getElementById('summaryBtn').textContent = '⏳ 정리 중...';
+  const summaryBtnEl = banner.querySelector('.js-summary-btn');
+  summaryBtnEl.addEventListener('click', async ()=>{
+    summaryBtnEl.disabled = true;
+    summaryBtnEl.textContent = '⏳ 정리 중...';
     await generateConclusion(question, answers, false);
-    document.getElementById('summaryBtn').disabled = false;
-    document.getElementById('summaryBtn').textContent = '📋 중간 정리';
+    summaryBtnEl.disabled = false;
+    summaryBtnEl.textContent = '📋 중간 정리';
   });
 
-  document.getElementById('endMeetingBtn').addEventListener('click', async ()=>{
+  const endBtnEl = banner.querySelector('.js-end-btn');
+  endBtnEl.addEventListener('click', async ()=>{
     banner.remove();
     await generateConclusion(question, currentAnswers, true);
     const endedLabel = document.createElement('div');
