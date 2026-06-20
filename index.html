@@ -538,6 +538,9 @@ body.has-dock{ padding-bottom: 140px; }
   font-size:12px;color:var(--ink-soft);
   font-family:'JetBrains Mono',monospace;text-align:center;
 }
+.chat-pause-banner .pause-btn-row{
+  display:flex; gap:8px; flex-wrap:wrap; justify-content:center;
+}
 .chat-pause-banner .continue-btn{
   background:var(--green);color:#fff;
   border:none;border-radius:20px;
@@ -546,6 +549,18 @@ body.has-dock{ padding-bottom: 140px; }
   box-shadow:0 4px 12px rgba(29,95,166,0.2);
 }
 .chat-pause-banner .continue-btn:active{ opacity:.85; }
+.chat-pause-banner .end-btn{
+  background:#fff; color: var(--ink-soft);
+  border:1px solid var(--rule); border-radius:20px;
+  padding:9px 18px; font-size:13.5px; font-weight:700;
+  cursor:pointer; font-family:'Noto Sans KR',sans-serif;
+}
+.chat-pause-banner .end-btn:active{ opacity:.7; }
+.meeting-ended-label{
+  text-align:center; padding:14px 0 4px;
+  font-size:12px; color: var(--green);
+  font-family:'JetBrains Mono',monospace; font-weight:700;
+}
 
 /* 토론모드 흐름 표시 */
 .flow-arrow{
@@ -1139,6 +1154,24 @@ const ROLES = {
   gemini: { title: 'Gemini · 정보이사', sub: 'CIO · Research & Market', avatar:'정', cls:'gemini' }
 };
 
+// ---------- 특정 임원 지목 감지 ----------
+// 회장이 한 명만 콕 집어 질문하면(예: "재무이사는~", "Claude 너는~") 그 임원만 답하도록 감지
+const ROLE_KEYWORDS = {
+  gpt: ['재무이사', 'gpt', 'GPT'],
+  claude: ['개발이사', 'claude', 'Claude', '클로드'],
+  gemini: ['정보이사', 'gemini', 'Gemini', '제미니', '제미나이']
+};
+function detectTargetedRole(text){
+  const matched = [];
+  for(const role in ROLE_KEYWORDS){
+    if(ROLE_KEYWORDS[role].some(kw => text.includes(kw))){
+      matched.push(role);
+    }
+  }
+  // 정확히 한 임원만 언급된 경우에만 단일 지목으로 인정 (둘 이상이면 전체 토론으로 처리)
+  return matched.length === 1 ? matched[0] : null;
+}
+
 const MODE_CONTEXT = {
   '일반회의': '일반적인 안건에 대해 각자 역할에 맞게 의견을 제시하라.',
   '사업분석': '우유대리점 등 자영업/유통 사업 경영 관점을 중심으로 분석하라.',
@@ -1394,8 +1427,11 @@ function createPauseBanner(){
   const banner = document.createElement('div');
   banner.className = 'chat-pause-banner';
   banner.innerHTML = `
-    <div class="pause-label">2라운드 토론 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
-    <button class="continue-btn" id="continueBtn">▶ 토론 이어가기</button>
+    <div class="pause-label">토론 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
+    <div class="pause-btn-row">
+      <button class="continue-btn" id="continueBtn">▶ 토론 이어가기</button>
+      <button class="end-btn" id="endMeetingBtn">■ 회의 종료 · 저장</button>
+    </div>
   `;
   return banner;
 }
@@ -1673,7 +1709,7 @@ function claudeErrorMessage(e){
 // ---------- system prompts ----------
 function buildSystemPrompt(role){
   const base = {
-    gpt: "너는 'AI 임원회의실'의 재무이사다. 회장 전창민(매일유업 검단대리점 운영)에게 보고하듯, 비용/ROI/리스크/사업성 관점에서 분석하라. 손익, 투자 분석, 우유대리점 경영 관점을 우선 고려하라.",
+    gpt: "너는 'AI 임원회의실'의 재무이사다. 회장 전창민(매일유업 검단대리점 운영)에게 보고하듯, 비용/ROI/리스크/사업성 관점에서 분석하라. 손익, 투자 분석, 우유대리점 경영 관점을 우선 고려하라. 절대 '모니터링이 필요하다', '신중한 접근이 필요하다' 같은 두루뭉술한 일반론으로 끝내지 마라. 반드시 구체적인 숫자, 비율, 대안 종목/방안을 하나 이상 제시하고, 명확한 입장(찬성/반대/유지/교체 등)을 밝혀라. 이전 라운드에서 이미 한 말을 표현만 바꿔 반복하지 말고, 매 발언마다 직전 라운드 대비 더 구체적이고 진전된 내용을 제시하라.",
     claude: "너는 'AI 임원회의실'의 개발이사다. 회장 전창민에게 보고하듯, 시스템 설계/코드/기술적 실현 가능성 관점에서 분석하라.",
     gemini: "너는 'AI 임원회의실'의 정보이사다. 회장 전창민에게 보고하듯, 최신 시장 동향/뉴스/경쟁사 정보 관점에서 분석하라."
   };
@@ -1716,8 +1752,53 @@ async function runMeeting(question, isFollowUp = false){
   const seats = {};
   const answers = {};
 
+  // ---- 특정 임원 단독 지목 감지 ----
+  const targetedRole = detectTargetedRole(question);
+
+  if(targetedRole){
+    // 지목된 임원 한 명만 답변
+    const roleNames = { gpt:'GPT 재무이사', claude:'Claude 개발이사', gemini:'Gemini 정보이사' };
+    statusText.textContent = `${roleNames[targetedRole]} 단독 답변 중...`;
+    const msg = createChatMsg(targetedRole);
+    chamber.appendChild(msg);
+    const targetedPrompt = `[회장이 ${roleNames[targetedRole]}에게 직접 질문/지시함]\n${question}${historyContext}\n\n다른 임원 의견을 기다리지 말고, 본인 의견만 명확히 답하라.`;
+
+    if(targetedRole === 'gpt'){
+      const r = await callGPT(buildSystemPrompt('gpt'), targetedPrompt);
+      answers.gpt = r.text || errorMessage('GPT 재무이사', r);
+    } else if(targetedRole === 'claude'){
+      try{ answers.claude = await callClaude(buildSystemPrompt('claude'), targetedPrompt); }
+      catch(e){ answers.claude = claudeErrorMessage(e); }
+    } else if(targetedRole === 'gemini'){
+      const r = await callGemini(buildSystemPrompt('gemini'), targetedPrompt, true);
+      answers.gemini = r.text || errorMessage('Gemini 정보이사', r);
+    }
+    setChatBody(msg, answers[targetedRole]);
+    meetingHistory.push({ role: targetedRole, content: answers[targetedRole] });
+
+    statusStrip.classList.remove('live');
+    statusText.textContent = '단독 답변 완료 · 추가 질문을 입력하세요';
+    meetingActive = true;
+    currentAnswers = answers;
+
+    await saveMeetingRecord({
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      mode: currentMode,
+      discussMode: discussMode,
+      perfMode: perfMode,
+      question: question,
+      answers: answers,
+      targetedRole: targetedRole
+    });
+
+    isProcessing = false;
+    sendBtn.disabled = false;
+    return; // 종합결론/투표 집계 없이 단독 답변으로 종료
+  }
+
   if(discussMode){
-    const TOTAL_ROUNDS = 2; // 토론 사이클 수 (회장 지시로 2사이클 적용)
+    const TOTAL_ROUNDS = 1; // 토론 사이클 수 (1회 후 정지, 이어가기로 다음 사이클 진행)
     for(let round = 1; round <= TOTAL_ROUNDS; round++){
       const roundTag = TOTAL_ROUNDS > 1 ? ` (${round}/${TOTAL_ROUNDS}라운드)` : '';
       // 직전 라운드까지의 히스토리를 매 라운드 갱신해서 다음 라운드에 반영
@@ -1870,12 +1951,34 @@ ${answers.gemini}
       banner.remove();
       runMeeting('[이어가기] 앞선 토론을 이어서, 각자 입장을 더 구체화하거나 새로운 관점을 추가하라.', true);
     });
+    document.getElementById('endMeetingBtn').addEventListener('click', async ()=>{
+      banner.remove();
+      const endedLabel = document.createElement('div');
+      endedLabel.className = 'meeting-ended-label';
+      endedLabel.textContent = '✓ 회의가 종료되어 회의록에 저장되었습니다';
+      chamber.appendChild(endedLabel);
+      chamber.scrollTop = chamber.scrollHeight;
+      // 전체 토론 히스토리를 포함하여 최종 저장
+      await saveMeetingRecord({
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        mode: currentMode,
+        discussMode: discussMode,
+        perfMode: perfMode,
+        question: meetingHistory.find(h => h.role === 'chairman')?.content || question,
+        answers: currentAnswers,
+        fullHistory: meetingHistory,
+        endedByChairman: true
+      });
+      meetingActive = false;
+      meetingHistory = [];
+    });
   }
 
   meetingActive = true;
   currentAnswers = answers;
 
-  // save record
+  // save record (자동 임시 저장 - 라운드마다)
   await saveMeetingRecord({
     id: Date.now().toString(),
     timestamp: Date.now(),
@@ -1898,7 +2001,7 @@ sendBtn.addEventListener('click', ()=>{
   questionInput.value = '';
   questionInput.style.height = 'auto';
   // 회의 진행 중이면 이어가기(회장 개입), 아니면 새 회의
-  const isFollowUp = meetingActive && discussMode;
+  const isFollowUp = meetingActive;
   runMeeting(fullQuestion, isFollowUp);
 });
 questionInput.addEventListener('keydown', (e)=>{
