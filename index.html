@@ -1394,7 +1394,7 @@ function createPauseBanner(){
   const banner = document.createElement('div');
   banner.className = 'chat-pause-banner';
   banner.innerHTML = `
-    <div class="pause-label">임원 발언 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
+    <div class="pause-label">2라운드 토론 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
     <button class="continue-btn" id="continueBtn">▶ 토론 이어가기</button>
   `;
   return banner;
@@ -1717,37 +1717,54 @@ async function runMeeting(question, isFollowUp = false){
   const answers = {};
 
   if(discussMode){
-    statusText.textContent = '토론 모드 · GPT 재무이사 발언 중...';
-    const gptMsg = createChatMsg('gpt');
-    chamber.appendChild(gptMsg);
-    const gptUserPrompt = `[안건]\n${question}${historyContext}`;
-    const gptResult = await callGPT(buildSystemPrompt('gpt'), gptUserPrompt);
-    answers.gpt = gptResult.text || errorMessage('GPT 재무이사', gptResult);
-    setChatBody(gptMsg, answers.gpt);
-    meetingHistory.push({ role: 'gpt', content: answers.gpt });
+    const TOTAL_ROUNDS = 2; // 토론 사이클 수 (회장 지시로 2사이클 적용)
+    for(let round = 1; round <= TOTAL_ROUNDS; round++){
+      const roundTag = TOTAL_ROUNDS > 1 ? ` (${round}/${TOTAL_ROUNDS}라운드)` : '';
+      // 직전 라운드까지의 히스토리를 매 라운드 갱신해서 다음 라운드에 반영
+      const roundHistoryContext = meetingHistory.length > 1
+        ? '\n\n[이전 대화 맥락]\n' + meetingHistory.slice(0, -1).map(h =>
+            (h.role === 'chairman' ? '회장 지시' : h.role) + ': ' + h.content.slice(0, 300)
+          ).join('\n---\n')
+        : '';
 
-    chamber.appendChild(createFlowArrow('개발이사 검토 →'));
-    statusText.textContent = '토론 모드 · Claude 개발이사 검토 중...';
-    const claudeMsg = createChatMsg('claude');
-    chamber.appendChild(claudeMsg);
-    const claudePrompt = `[안건]\n${question}${historyContext}\n\n[GPT 재무이사 의견]\n${answers.gpt}\n\n위 재무이사 의견을 기술/시스템 관점에서 검증하거나 보완/반박하라.`;
-    try{
-      answers.claude = await callClaude(buildSystemPrompt('claude'), claudePrompt);
-    }catch(e){
-      answers.claude = claudeErrorMessage(e);
+      if(round > 1){
+        chamber.appendChild(createFlowArrow(`${round}라운드 시작 →`));
+      }
+
+      statusText.textContent = `토론 모드${roundTag} · GPT 재무이사 발언 중...`;
+      const gptMsg = createChatMsg('gpt');
+      chamber.appendChild(gptMsg);
+      const gptUserPrompt = round === 1
+        ? `[안건]\n${question}${roundHistoryContext}`
+        : `[안건]\n${question}${roundHistoryContext}\n\n앞선 라운드 논의를 바탕으로 입장을 더 구체화하거나 보완하라.`;
+      const gptResult = await callGPT(buildSystemPrompt('gpt'), gptUserPrompt);
+      answers.gpt = gptResult.text || errorMessage('GPT 재무이사', gptResult);
+      setChatBody(gptMsg, answers.gpt);
+      meetingHistory.push({ role: 'gpt', content: answers.gpt });
+
+      chamber.appendChild(createFlowArrow('개발이사 검토 →'));
+      statusText.textContent = `토론 모드${roundTag} · Claude 개발이사 검토 중...`;
+      const claudeMsg = createChatMsg('claude');
+      chamber.appendChild(claudeMsg);
+      const claudePrompt = `[안건]\n${question}${roundHistoryContext}\n\n[GPT 재무이사 의견]\n${answers.gpt}\n\n위 재무이사 의견을 기술/시스템 관점에서 검증하거나 보완/반박하라.`;
+      try{
+        answers.claude = await callClaude(buildSystemPrompt('claude'), claudePrompt);
+      }catch(e){
+        answers.claude = claudeErrorMessage(e);
+      }
+      setChatBody(claudeMsg, answers.claude);
+      meetingHistory.push({ role: 'claude', content: answers.claude });
+
+      chamber.appendChild(createFlowArrow('정보이사 검증 →'));
+      statusText.textContent = `토론 모드${roundTag} · Gemini 정보이사 검증 중...`;
+      const geminiMsg = createChatMsg('gemini');
+      chamber.appendChild(geminiMsg);
+      const geminiPrompt = `[안건]\n${question}${roundHistoryContext}\n\n[GPT 재무이사]\n${answers.gpt}\n\n[Claude 개발이사]\n${answers.claude}\n\n앞선 두 의견을 최신 정보/시장 관점에서 검증하라.`;
+      const geminiResult = await callGemini(buildSystemPrompt('gemini'), geminiPrompt, true);
+      answers.gemini = geminiResult.text || errorMessage('Gemini 정보이사', geminiResult);
+      setChatBody(geminiMsg, answers.gemini);
+      meetingHistory.push({ role: 'gemini', content: answers.gemini });
     }
-    setChatBody(claudeMsg, answers.claude);
-    meetingHistory.push({ role: 'claude', content: answers.claude });
-
-    chamber.appendChild(createFlowArrow('정보이사 검증 →'));
-    statusText.textContent = '토론 모드 · Gemini 정보이사 검증 중...';
-    const geminiMsg = createChatMsg('gemini');
-    chamber.appendChild(geminiMsg);
-    const geminiPrompt = `[안건]\n${question}${historyContext}\n\n[GPT 재무이사]\n${answers.gpt}\n\n[Claude 개발이사]\n${answers.claude}\n\n앞선 두 의견을 최신 정보/시장 관점에서 검증하라.`;
-    const geminiResult = await callGemini(buildSystemPrompt('gemini'), geminiPrompt, true);
-    answers.gemini = geminiResult.text || errorMessage('Gemini 정보이사', geminiResult);
-    setChatBody(geminiMsg, answers.gemini);
-    meetingHistory.push({ role: 'gemini', content: answers.gemini });
 
   } else {
     statusText.textContent = '일반회의 모드 · 임원진 동시 검토 중...';
