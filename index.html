@@ -1232,39 +1232,67 @@ function updateKeyStatus(){
   else { cs.className='key-status ok'; cs.innerHTML='<span class="d"></span>자동 연결됨'; }
 }
 async function saveMeetingRecord(record){
-  try{
-    const key = 'exec-room:meeting:' + record.id;
-    await window.storage.set(key, JSON.stringify(record));
-  }catch(e){ console.error('save failed', e); }
+  const key = 'exec-room:meeting:' + record.id;
+  // localStorage 우선 저장 (GitHub Pages 등 일반 브라우저 환경)
+  try{ localStorage.setItem(key, JSON.stringify(record)); }catch(e){ console.error('localStorage save failed', e); }
+  // window.storage도 시도 (Claude Artifact 환경)
+  try{ await window.storage.set(key, JSON.stringify(record)); }catch(e){}
 }
 async function loadHistory(){
   const listEl = document.getElementById('historyList');
   try{
-    const res = await window.storage.list('exec-room:meeting:');
-    if(!res || !res.keys || res.keys.length===0){
-      listEl.innerHTML = '<div class="history-empty">아직 저장된 회의록이 없습니다.</div>';
-      return;
-    }
     const records = [];
-    for(const k of res.keys){
-      try{
-        const r = await window.storage.get(k);
-        if(r) records.push(JSON.parse(r.value));
-      }catch(e){}
-    }
-    records.sort((a,b)=> b.timestamp - a.timestamp);
+    const seenIds = new Set();
+
+    // localStorage에서 조회
+    try{
+      for(let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(k && k.startsWith('exec-room:meeting:')){
+          try{
+            const r = JSON.parse(localStorage.getItem(k));
+            if(r && !seenIds.has(r.id)){
+              records.push(r);
+              seenIds.add(r.id);
+            }
+          }catch(e){}
+        }
+      }
+    }catch(e){}
+
+    // window.storage에서도 조회 (Claude Artifact 환경, 중복 제외)
+    try{
+      const res = await window.storage.list('exec-room:meeting:');
+      if(res && res.keys && res.keys.length > 0){
+        for(const k of res.keys){
+          try{
+            const r = await window.storage.get(k);
+            if(r){
+              const parsed = JSON.parse(r.value);
+              if(!seenIds.has(parsed.id)){
+                records.push(parsed);
+                seenIds.add(parsed.id);
+              }
+            }
+          }catch(e){}
+        }
+      }
+    }catch(e){}
+
     if(records.length===0){
       listEl.innerHTML = '<div class="history-empty">아직 저장된 회의록이 없습니다.</div>';
       return;
     }
+    records.sort((a,b)=> b.timestamp - a.timestamp);
     listEl.innerHTML = records.map(r => `
       <div class="history-item">
-        <div class="h-top"><span class="tag">${r.mode}${r.discussMode ? ' · 토론' : ''}${r.perfMode === 'mini' ? ' · 가성비' : ''}</span></div>
+        <div class="h-top"><span class="tag">${r.mode}${r.discussMode ? ' · 토론' : ''}${r.perfMode === 'mini' ? ' · 가성비' : ''}${r.endedByChairman ? ' · 종료됨' : ''}</span></div>
         <div class="h-q">${escapeHtml(r.question)}</div>
         <div class="h-date">${new Date(r.timestamp).toLocaleString('ko-KR')}</div>
       </div>
     `).join('');
   }catch(e){
+    console.error('loadHistory error', e);
     listEl.innerHTML = '<div class="history-empty">불러오기 실패</div>';
   }
 }
