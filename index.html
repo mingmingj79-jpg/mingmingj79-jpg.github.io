@@ -556,6 +556,14 @@ body.has-dock{ padding-bottom: 140px; }
   cursor:pointer; font-family:'Noto Sans KR',sans-serif;
 }
 .chat-pause-banner .end-btn:active{ opacity:.7; }
+.chat-pause-banner .summary-btn{
+  background: var(--paper-dim); color: var(--ink);
+  border:1px solid var(--rule); border-radius:20px;
+  padding:9px 18px; font-size:13.5px; font-weight:700;
+  cursor:pointer; font-family:'Noto Sans KR',sans-serif;
+}
+.chat-pause-banner .summary-btn:active{ opacity:.7; }
+.chat-pause-banner .summary-btn:disabled{ opacity:.5; cursor:not-allowed; }
 .meeting-ended-label{
   text-align:center; padding:14px 0 4px;
   font-size:12px; color: var(--green);
@@ -1427,9 +1435,10 @@ function createPauseBanner(){
   const banner = document.createElement('div');
   banner.className = 'chat-pause-banner';
   banner.innerHTML = `
-    <div class="pause-label">토론 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
+    <div class="pause-label">발언 완료 · 추가 지시를 입력하거나 아래 버튼을 누르세요</div>
     <div class="pause-btn-row">
-      <button class="continue-btn" id="continueBtn">▶ 토론 이어가기</button>
+      ${discussMode ? '<button class="continue-btn" id="continueBtn">▶ 토론 이어가기</button>' : ''}
+      <button class="summary-btn" id="summaryBtn">📋 중간 정리</button>
       <button class="end-btn" id="endMeetingBtn">■ 회의 종료 · 저장</button>
     </div>
   `;
@@ -1872,18 +1881,91 @@ async function runMeeting(question, isFollowUp = false){
     setChatBody(msgs.gemini, answers.gemini);
   }
 
-  // ---- 찬반형 질문 투표 집계 ----
+  // ---- 찬반형 질문 투표 집계 (참고용, 라운드마다 표시 - 결론과 달리 가벼운 자동 분류라 흐름 방해 적음) ----
   if(isYesNoQuestion(question)){
     chamber.appendChild(createVoteTally(answers));
   }
 
-  // ---- 종합결론 ----
+  statusStrip.classList.remove('live');
+  if(connectionIssues.length > 0){
+    statusText.textContent = `⚠ 연결 진단: ${connectionIssues.join(', ')} 응답 실패`;
+  } else {
+    statusText.textContent = '발언 완료 · 추가 지시, 중간 정리, 또는 토론 이어가기를 선택하세요';
+  }
+
+  meetingActive = true;
+  currentAnswers = answers;
+
+  // 라운드 종료 시 배너 표시 (토론모드/단독지목이 아닌 일반 흐름일 때)
+  const banner = createPauseBanner();
+  chamber.appendChild(banner);
+  chamber.scrollTop = chamber.scrollHeight;
+
+  const continueBtnEl = document.getElementById('continueBtn');
+  if(continueBtnEl){
+    continueBtnEl.addEventListener('click', ()=>{
+      banner.remove();
+      runMeeting('[이어가기] 앞선 토론을 이어서, 각자 입장을 더 구체화하거나 새로운 관점을 추가하라.', true);
+    });
+  }
+
+  document.getElementById('summaryBtn').addEventListener('click', async ()=>{
+    document.getElementById('summaryBtn').disabled = true;
+    document.getElementById('summaryBtn').textContent = '⏳ 정리 중...';
+    await generateConclusion(question, answers, false);
+    document.getElementById('summaryBtn').disabled = false;
+    document.getElementById('summaryBtn').textContent = '📋 중간 정리';
+  });
+
+  document.getElementById('endMeetingBtn').addEventListener('click', async ()=>{
+    banner.remove();
+    await generateConclusion(question, currentAnswers, true);
+    const endedLabel = document.createElement('div');
+    endedLabel.className = 'meeting-ended-label';
+    endedLabel.textContent = '✓ 회의가 종료되어 회의록에 저장되었습니다';
+    chamber.appendChild(endedLabel);
+    chamber.scrollTop = chamber.scrollHeight;
+    await saveMeetingRecord({
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      mode: currentMode,
+      discussMode: discussMode,
+      perfMode: perfMode,
+      question: meetingHistory.find(h => h.role === 'chairman')?.content || question,
+      answers: currentAnswers,
+      fullHistory: meetingHistory,
+      endedByChairman: true
+    });
+    meetingActive = false;
+    meetingHistory = [];
+  });
+
+  // save record (자동 임시 저장 - 라운드마다, 결론 없이 답변만)
+  await saveMeetingRecord({
+    id: Date.now().toString(),
+    timestamp: Date.now(),
+    mode: currentMode,
+    discussMode: discussMode,
+    perfMode: perfMode,
+    question: question,
+    answers: answers
+  });
+
+  isProcessing = false;
+  sendBtn.disabled = false;
+}
+
+// ---------- 종합결론 생성 (회의 종료 또는 중간 정리 버튼에서만 호출) ----------
+async function generateConclusion(question, answers, isFinal){
   statusText.textContent = currentMode === '코드리뷰' ? '수석 간사 · 최종 통합 코드 작성 중...' : '수석 간사 · 종합결론 작성 중...';
   const conclusionCard = createConclusionCard();
   if(currentMode === '코드리뷰'){
-    conclusionCard.querySelector('h3').textContent = '최종 통합 코드';
+    conclusionCard.querySelector('h3').textContent = isFinal ? '최종 통합 코드' : '중간 정리 · 통합 코드';
+  } else if(!isFinal){
+    conclusionCard.querySelector('h3').textContent = '중간 정리';
   }
   chamber.appendChild(conclusionCard);
+  chamber.scrollTop = chamber.scrollHeight;
 
   const summaryPrompt = currentMode === '코드리뷰'
     ? `세 임원의 코드 리뷰 의견을 종합하여 최종 개선 코드를 작성하라.
@@ -1892,28 +1974,28 @@ async function runMeeting(question, isFollowUp = false){
 ${question}
 
 [GPT 재무이사 검토]
-${answers.gpt}
+${answers.gpt || '(해당 라운드 미발언)'}
 
 [Claude 개발이사 검토]
-${answers.claude}
+${answers.claude || '(해당 라운드 미발언)'}
 
 [Gemini 정보이사 검토]
-${answers.gemini}
+${answers.gemini || '(해당 라운드 미발언)'}
 
 위 세 임원의 수정 의견을 모두 반영하여, 최종적으로 개선된 코드를 \`\`\`언어명 ... \`\`\` 형식의 코드 블록으로 제시하라. 주요 변경점을 코드 위에 3줄 이내로 간단히 설명하고 바로 코드를 제시하라.`
-    : `회장 전창민에게 보고할 'AI 임원회의' 종합결론을 작성하라.
+    : `회장 전창민에게 보고할 'AI 임원회의' ${isFinal ? '최종 종합결론' : '중간 정리'}을 작성하라.
 
 [원안건]
 ${question}
 
 [GPT 재무이사 의견]
-${answers.gpt}
+${answers.gpt || '(해당 라운드 미발언)'}
 
 [Claude 개발이사 의견]
-${answers.claude}
+${answers.claude || '(해당 라운드 미발언)'}
 
 [Gemini 정보이사 의견]
-${answers.gemini}
+${answers.gemini || '(해당 라운드 미발언)'}
 
 위 세 임원의 의견을 종합하여, 회장이 즉각 의사결정을 내릴 수 있도록 다음 형식으로 한국어로 정리하라:
 [핵심 요약]
@@ -1934,63 +2016,7 @@ ${answers.gemini}
     conclusionCard.querySelector('.con-body').classList.remove('empty');
     conclusionCard.querySelector('.con-body').textContent = claudeErrorMessage(e);
   }
-
-  statusStrip.classList.remove('live');
-  if(connectionIssues.length > 0){
-    statusText.textContent = `⚠ 연결 진단: ${connectionIssues.join(', ')} 응답 실패`;
-  } else {
-    statusText.textContent = '발언 완료 · 추가 지시를 입력하거나 토론 이어가기를 눌러주세요';
-  }
-
-  // 이어가기 배너 표시 (토론모드일 때)
-  if(discussMode){
-    const banner = createPauseBanner();
-    chamber.appendChild(banner);
-    chamber.scrollTop = chamber.scrollHeight;
-    document.getElementById('continueBtn').addEventListener('click', ()=>{
-      banner.remove();
-      runMeeting('[이어가기] 앞선 토론을 이어서, 각자 입장을 더 구체화하거나 새로운 관점을 추가하라.', true);
-    });
-    document.getElementById('endMeetingBtn').addEventListener('click', async ()=>{
-      banner.remove();
-      const endedLabel = document.createElement('div');
-      endedLabel.className = 'meeting-ended-label';
-      endedLabel.textContent = '✓ 회의가 종료되어 회의록에 저장되었습니다';
-      chamber.appendChild(endedLabel);
-      chamber.scrollTop = chamber.scrollHeight;
-      // 전체 토론 히스토리를 포함하여 최종 저장
-      await saveMeetingRecord({
-        id: Date.now().toString(),
-        timestamp: Date.now(),
-        mode: currentMode,
-        discussMode: discussMode,
-        perfMode: perfMode,
-        question: meetingHistory.find(h => h.role === 'chairman')?.content || question,
-        answers: currentAnswers,
-        fullHistory: meetingHistory,
-        endedByChairman: true
-      });
-      meetingActive = false;
-      meetingHistory = [];
-    });
-  }
-
-  meetingActive = true;
-  currentAnswers = answers;
-
-  // save record (자동 임시 저장 - 라운드마다)
-  await saveMeetingRecord({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    mode: currentMode,
-    discussMode: discussMode,
-    perfMode: perfMode,
-    question: question,
-    answers: answers
-  });
-
-  isProcessing = false;
-  sendBtn.disabled = false;
+  chamber.scrollTop = chamber.scrollHeight;
 }
 
 sendBtn.addEventListener('click', ()=>{
