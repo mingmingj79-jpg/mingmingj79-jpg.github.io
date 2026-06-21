@@ -1352,52 +1352,73 @@ async function saveMeetingRecord(record){
   // window.storage도 시도 (Claude Artifact 환경)
   try{ await window.storage.set(key, JSON.stringify(record)); }catch(e){}
 }
+
+// 저장된 모든 회의록을 가져오는 공통 함수 (loadHistory, 과거회의 참고용 둘 다 재사용)
+async function fetchAllMeetingRecords(){
+  const records = [];
+  const seenIds = new Set();
+  try{
+    for(let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith('exec-room:meeting:')){
+        try{
+          const r = JSON.parse(localStorage.getItem(k));
+          if(r && !seenIds.has(r.id)){
+            records.push(r);
+            seenIds.add(r.id);
+          }
+        }catch(e){}
+      }
+    }
+  }catch(e){}
+  try{
+    const res = await window.storage.list('exec-room:meeting:');
+    if(res && res.keys && res.keys.length > 0){
+      for(const k of res.keys){
+        try{
+          const r = await window.storage.get(k);
+          if(r){
+            const parsed = JSON.parse(r.value);
+            if(!seenIds.has(parsed.id)){
+              records.push(parsed);
+              seenIds.add(parsed.id);
+            }
+          }
+        }catch(e){}
+      }
+    }
+  }catch(e){}
+  records.sort((a,b)=> b.timestamp - a.timestamp);
+  return records;
+}
+
+// 과거 회의록 중 최근 N개를 임원 프롬프트에 끼워넣을 요약 문자열로 변환
+let pastMeetingsContext = ''; // 회의 시작 시 한 번 계산해서 재사용
+async function buildPastMeetingsContext(){
+  try{
+    const records = await fetchAllMeetingRecords();
+    if(records.length === 0) return '';
+    const recent = records.slice(0, 5); // 가장 최근 5건만 참고 (글자 수 제한 고려)
+    const lines = recent.map(r => {
+      const date = new Date(r.timestamp).toLocaleDateString('ko-KR');
+      const concl = r.conclusion ? r.conclusion.slice(0, 150) : '';
+      return `- [${date}] 안건: ${r.question.slice(0,120)}${concl ? ' / 결론: ' + concl : ''}`;
+    });
+    return '\n\n[과거 회의 이력 참고 - 최근 ' + recent.length + '건]\n' + lines.join('\n') + '\n위 과거 이력과 모순되지 않게, 또는 필요시 이전 결정을 언급하며 답변하라. 단, 과거 이력은 참고용일 뿐 현재 안건이 우선이다.';
+  }catch(e){
+    return '';
+  }
+}
+
 async function loadHistory(){
   const listEl = document.getElementById('historyList');
   try{
-    const records = [];
-    const seenIds = new Set();
-
-    // localStorage에서 조회
-    try{
-      for(let i = 0; i < localStorage.length; i++){
-        const k = localStorage.key(i);
-        if(k && k.startsWith('exec-room:meeting:')){
-          try{
-            const r = JSON.parse(localStorage.getItem(k));
-            if(r && !seenIds.has(r.id)){
-              records.push(r);
-              seenIds.add(r.id);
-            }
-          }catch(e){}
-        }
-      }
-    }catch(e){}
-
-    // window.storage에서도 조회 (Claude Artifact 환경, 중복 제외)
-    try{
-      const res = await window.storage.list('exec-room:meeting:');
-      if(res && res.keys && res.keys.length > 0){
-        for(const k of res.keys){
-          try{
-            const r = await window.storage.get(k);
-            if(r){
-              const parsed = JSON.parse(r.value);
-              if(!seenIds.has(parsed.id)){
-                records.push(parsed);
-                seenIds.add(parsed.id);
-              }
-            }
-          }catch(e){}
-        }
-      }
-    }catch(e){}
+    const records = await fetchAllMeetingRecords();
 
     if(records.length===0){
       listEl.innerHTML = '<div class="history-empty">아직 저장된 회의록이 없습니다.</div>';
       return;
     }
-    records.sort((a,b)=> b.timestamp - a.timestamp);
     listEl.innerHTML = records.map(r => `
       <div class="history-item">
         <button class="history-delete-btn" data-id="${escapeHtml(r.id)}" title="회의록 삭제">🗑</button>
@@ -1985,11 +2006,12 @@ async function runMeeting(question, isFollowUp = false){
   currentAbortController = new AbortController();
   document.getElementById('stopBtn').style.display = '';
 
-  // 첫 질문이면 화면 초기화
+  // 첫 질문이면 화면 초기화 + 과거 회의록 참고자료 준비
   if(!isFollowUp){
     ensureRoomVisible();
     chamber.innerHTML = '';
     meetingHistory = [];
+    pastMeetingsContext = await buildPastMeetingsContext();
   }
 
   // 회장 말풍선
@@ -1999,12 +2021,12 @@ async function runMeeting(question, isFollowUp = false){
   // 히스토리 누적
   meetingHistory.push({ role: 'chairman', content: question });
 
-  // 이어가기 시 맥락 문자열
-  const historyContext = meetingHistory.length > 1
+  // 이어가기 시 맥락 문자열 (+ 과거 회의록 참고자료는 매 호출에 동일하게 결합)
+  const historyContext = (meetingHistory.length > 1
     ? '\n\n[이전 대화 맥락]\n' + meetingHistory.slice(0, -1).map(h =>
         (h.role === 'chairman' ? '회장 지시' : h.role) + ': ' + h.content.slice(0, 300)
       ).join('\n---\n')
-    : '';
+    : '') + pastMeetingsContext;
 
   statusStrip.classList.add('live');
   const seats = {};
@@ -2060,12 +2082,12 @@ async function runMeeting(question, isFollowUp = false){
     const TOTAL_ROUNDS = 1; // 토론 사이클 수 (1회 후 정지, 이어가기로 다음 사이클 진행)
     for(let round = 1; round <= TOTAL_ROUNDS; round++){
       const roundTag = TOTAL_ROUNDS > 1 ? ` (${round}/${TOTAL_ROUNDS}라운드)` : '';
-      // 직전 라운드까지의 히스토리를 매 라운드 갱신해서 다음 라운드에 반영
-      const roundHistoryContext = meetingHistory.length > 1
+      // 직전 라운드까지의 히스토리를 매 라운드 갱신해서 다음 라운드에 반영 (+ 과거 회의록 참고)
+      const roundHistoryContext = (meetingHistory.length > 1
         ? '\n\n[이전 대화 맥락]\n' + meetingHistory.slice(0, -1).map(h =>
             (h.role === 'chairman' ? '회장 지시' : h.role) + ': ' + h.content.slice(0, 300)
           ).join('\n---\n')
-        : '';
+        : '') + pastMeetingsContext;
 
       if(round > 1){
         chamber.appendChild(createFlowArrow(`${round}라운드 시작 →`));
@@ -2119,10 +2141,11 @@ async function runMeeting(question, isFollowUp = false){
     chamber.appendChild(msgs.claude);
     chamber.appendChild(msgs.gemini);
 
+    const generalPrompt = `[안건]\n${question}${historyContext}`;
     const [gptResult, claudeText, geminiResult] = await Promise.all([
-      callGPT(buildSystemPrompt('gpt'), question),
-      callClaude(buildSystemPrompt('claude'), question).catch(e => claudeErrorMessage(e)),
-      callGemini(buildSystemPrompt('gemini'), question, true)
+      callGPT(buildSystemPrompt('gpt'), generalPrompt),
+      callClaude(buildSystemPrompt('claude'), generalPrompt).catch(e => claudeErrorMessage(e)),
+      callGemini(buildSystemPrompt('gemini'), generalPrompt, true)
     ]);
     answers.gpt = gptResult.text || errorMessage('GPT 재무이사', gptResult);
     answers.claude = claudeText;
@@ -2173,7 +2196,7 @@ async function runMeeting(question, isFollowUp = false){
   const endBtnEl = banner.querySelector('.js-end-btn');
   endBtnEl.addEventListener('click', async ()=>{
     banner.remove();
-    await generateConclusion(question, currentAnswers, true);
+    const finalConclusion = await generateConclusion(question, currentAnswers, true);
     const endedLabel = document.createElement('div');
     endedLabel.className = 'meeting-ended-label';
     endedLabel.textContent = '✓ 회의가 종료되어 회의록에 저장되었습니다';
@@ -2188,6 +2211,7 @@ async function runMeeting(question, isFollowUp = false){
       question: meetingHistory.find(h => h.role === 'chairman')?.content || question,
       answers: currentAnswers,
       fullHistory: meetingHistory,
+      conclusion: finalConclusion,
       endedByChairman: true
     });
     meetingActive = false;
@@ -2263,15 +2287,19 @@ ${answers.gemini || '(해당 라운드 미발언)'}
     ? "너는 시니어 개발자다. 여러 개발자의 코드 리뷰 의견을 종합하여 최종적으로 가장 잘 개선된 코드를 만들어라. 반드시 코드 블록으로 실제 코드를 제시해야 한다."
     : "너는 'AI 임원회의실'의 수석 간사다. 세 임원의 의견을 객관적으로 종합해 회장이 바로 결정할 수 있는 보고서를 작성한다. 추측을 사실처럼 말하지 않고, 불확실한 부분은 명시한다.";
 
+  let conclusionText = '';
   try{
     const conclusion = await callClaude(summarySystem, summaryPrompt);
+    conclusionText = conclusion;
     conclusionCard.querySelector('.con-body').classList.remove('empty');
     conclusionCard.querySelector('.con-body').innerHTML = renderBubbleContent(conclusion);
   }catch(e){
+    conclusionText = claudeErrorMessage(e);
     conclusionCard.querySelector('.con-body').classList.remove('empty');
-    conclusionCard.querySelector('.con-body').textContent = claudeErrorMessage(e);
+    conclusionCard.querySelector('.con-body').textContent = conclusionText;
   }
   chamber.scrollTop = chamber.scrollHeight;
+  return conclusionText;
 }
 
 sendBtn.addEventListener('click', ()=>{
