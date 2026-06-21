@@ -390,6 +390,15 @@ body.has-dock{ padding-bottom: 140px; }
   box-shadow:0 0 8px rgba(29,95,166,0.5);
   animation: pulse 1.1s infinite;
 }
+.status-strip #statusText{ flex:1; min-width:0; }
+.status-strip .stop-btn{
+  flex:0 0 auto;
+  background:#fff; color:#c0392b;
+  border:1px solid #c0392b; border-radius:14px;
+  padding:4px 11px; font-size:11px; font-weight:700;
+  cursor:pointer; font-family:'Noto Sans KR',sans-serif;
+}
+.status-strip .stop-btn:active{ opacity:.7; }
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
 
 /* ===== seats / cards ===== */
@@ -887,8 +896,9 @@ body.has-dock{ padding-bottom: 140px; }
 .key-status.no .d{ background:#b9c2b3; }
 
 .history-item{
-  padding:12px 4px; border-bottom:1px solid var(--rule);
+  padding:12px 30px 12px 4px; border-bottom:1px solid var(--rule);
   cursor:pointer;
+  position:relative;
 }
 .history-item .h-top{ display:flex; justify-content:space-between; font-size:12px; color:var(--ink-soft); margin-bottom:4px;}
 .history-item .h-top .tag{
@@ -897,6 +907,15 @@ body.has-dock{ padding-bottom: 140px; }
 }
 .history-item .h-q{ font-size:13px; color: var(--ink); line-height:1.4; }
 .history-item .h-date{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--ink-soft); margin-top:3px;}
+.history-delete-btn{
+  position:absolute; top:10px; right:2px;
+  background:none; border:none;
+  font-size:15px; color: var(--ink-soft);
+  cursor:pointer; padding:4px 6px;
+  border-radius:6px;
+  opacity:0.55;
+}
+.history-delete-btn:active{ opacity:1; background: var(--paper-dim); }
 .history-empty{ text-align:center; color:var(--ink-soft); font-size:12.5px; padding: 30px 0; }
 </style>
 </head>
@@ -1034,6 +1053,7 @@ body.has-dock{ padding-bottom: 140px; }
 <div class="status-strip" id="statusStrip">
   <div class="dot"></div>
   <span id="statusText">회의 대기 중 · 질문을 입력하면 임원진이 소집됩니다</span>
+  <button class="stop-btn" id="stopBtn" style="display:none;">■ 중지</button>
 </div>
 
 <div class="chamber" id="chamber">
@@ -1259,6 +1279,7 @@ let gptKey = '';
 let geminiKey = '';
 let claudeKey = '';
 let isProcessing = false;
+let currentAbortController = null; // 진행 중인 API 호출을 중지시키기 위한 컨트롤러
 let meetingHistory = []; // 대화 히스토리 누적 [{role, content}]
 let meetingActive = false; // 회의 진행 중 (이어가기 가능 상태)
 let currentAnswers = {}; // 마지막 임원 답변 보관
@@ -1349,16 +1370,36 @@ async function loadHistory(){
     records.sort((a,b)=> b.timestamp - a.timestamp);
     listEl.innerHTML = records.map(r => `
       <div class="history-item">
+        <button class="history-delete-btn" data-id="${escapeHtml(r.id)}" title="회의록 삭제">🗑</button>
         <div class="h-top"><span class="tag">${r.mode}${r.discussMode ? ' · 토론' : ''}${r.perfMode === 'mini' ? ' · 가성비' : ''}${r.endedByChairman ? ' · 종료됨' : ''}</span></div>
         <div class="h-q">${escapeHtml(r.question)}</div>
         <div class="h-date">${new Date(r.timestamp).toLocaleString('ko-KR')}</div>
       </div>
     `).join('');
+
+    // 삭제 버튼 이벤트 연결
+    listEl.querySelectorAll('.history-delete-btn').forEach(btn=>{
+      btn.addEventListener('click', async (e)=>{
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const confirmed = confirm('이 회의록을 삭제할까요? 삭제하면 복구할 수 없습니다.');
+        if(!confirmed) return;
+        await deleteMeetingRecord(id);
+        loadHistory();
+      });
+    });
   }catch(e){
     console.error('loadHistory error', e);
     listEl.innerHTML = '<div class="history-empty">불러오기 실패</div>';
   }
 }
+
+async function deleteMeetingRecord(id){
+  const key = 'exec-room:meeting:' + id;
+  try{ localStorage.removeItem(key); }catch(e){}
+  try{ await window.storage.delete(key); }catch(e){}
+}
+
 function escapeHtml(s){
   const d = document.createElement('div'); d.innerText = s; return d.innerHTML;
 }
@@ -1718,6 +1759,7 @@ async function callClaude(systemPrompt, userPrompt){
     response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: headers,
+      signal: currentAbortController ? currentAbortController.signal : undefined,
       body: JSON.stringify({
         model: model,
         max_tokens: 1000,
@@ -1726,6 +1768,11 @@ async function callClaude(systemPrompt, userPrompt){
       })
     });
   }catch(e){
+    if(e.name === 'AbortError'){
+      const err = new Error('회장님이 답변을 중지했습니다.');
+      err.code = 'ABORTED';
+      throw err;
+    }
     const err = new Error('브라우저 보안 정책(CORS)으로 직접 호출이 막혔습니다. 중계 서버가 필요합니다.');
     err.code = 'CORS';
     throw err;
@@ -1749,6 +1796,7 @@ async function callGPT(systemPrompt, userPrompt){
         "Content-Type": "application/json",
         "Authorization": "Bearer " + gptKey
       },
+      signal: currentAbortController ? currentAbortController.signal : undefined,
       body: JSON.stringify({
         model: model,
         max_tokens: 800,
@@ -1765,6 +1813,9 @@ async function callGPT(systemPrompt, userPrompt){
     const data = await response.json();
     return { text: data.choices[0].message.content };
   }catch(e){
+    if(e.name === 'AbortError'){
+      return { error: 'ABORTED', detail: '회장님이 답변을 중지했습니다.' };
+    }
     return { error: 'CORS_OR_NETWORK', detail: e.message };
   }
 }
@@ -1785,6 +1836,7 @@ async function callGemini(systemPrompt, userPrompt, useSearch){
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: currentAbortController ? currentAbortController.signal : undefined,
         body: JSON.stringify(body)
       }
     );
@@ -1796,6 +1848,9 @@ async function callGemini(systemPrompt, userPrompt, useSearch){
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     return { text: text || '(응답 없음)' };
   }catch(e){
+    if(e.name === 'AbortError'){
+      return { error: 'ABORTED', detail: '회장님이 답변을 중지했습니다.' };
+    }
     return { error: 'CORS_OR_NETWORK', detail: e.message };
   }
 }
@@ -1805,6 +1860,9 @@ let connectionIssues = [];
 function errorMessage(roleLabel, result){
   if(result.error === 'NO_KEY'){
     return `[${roleLabel} 미응답]\nAPI 키가 아직 설정되지 않았습니다.\n우측 상단 ⚙ 설정에서 키를 입력해 주세요.`;
+  }
+  if(result.error === 'ABORTED'){
+    return `[${roleLabel} 답변 중지됨]\n회장님이 답변을 중지했습니다.`;
   }
   if(result.error === 'CORS_OR_NETWORK'){
     console.error(`[연결 진단] ${roleLabel} → CORS/네트워크 차단:`, result.detail);
@@ -1821,6 +1879,9 @@ function claudeErrorMessage(e){
   if(e.code === 'NO_KEY'){
     connectionIssues.push('Claude 개발이사 (키 미설정)');
     return `[개발이사 Claude 미응답]\nClaude API 키가 아직 설정되지 않았습니다.\n우측 상단 ⚙ 설정에서 Claude API 키를 입력해 주세요.\n(console.anthropic.com 에서 발급)`;
+  }
+  if(e.code === 'ABORTED'){
+    return `[개발이사 Claude 답변 중지됨]\n회장님이 답변을 중지했습니다.`;
   }
   if(e.code === 'CORS'){
     connectionIssues.push('Claude 개발이사 (CORS)');
@@ -1850,6 +1911,8 @@ async function runMeeting(question, isFollowUp = false){
   sendBtn.disabled = true;
   connectionIssues = [];
   meetingActive = false;
+  currentAbortController = new AbortController();
+  document.getElementById('stopBtn').style.display = '';
 
   // 첫 질문이면 화면 초기화
   if(!isFollowUp){
@@ -1918,6 +1981,7 @@ async function runMeeting(question, isFollowUp = false){
 
     isProcessing = false;
     sendBtn.disabled = false;
+    document.getElementById('stopBtn').style.display = 'none';
     return; // 종합결론/투표 집계 없이 단독 답변으로 종료
   }
 
@@ -1946,6 +2010,7 @@ async function runMeeting(question, isFollowUp = false){
       answers.gpt = gptResult.text || errorMessage('GPT 재무이사', gptResult);
       setChatBody(gptMsg, answers.gpt);
       meetingHistory.push({ role: 'gpt', content: answers.gpt });
+      if(currentAbortController.signal.aborted) break;
 
       chamber.appendChild(createFlowArrow('개발이사 검토 →'));
       statusText.textContent = `토론 모드${roundTag} · Claude 개발이사 검토 중...`;
@@ -1959,6 +2024,7 @@ async function runMeeting(question, isFollowUp = false){
       }
       setChatBody(claudeMsg, answers.claude);
       meetingHistory.push({ role: 'claude', content: answers.claude });
+      if(currentAbortController.signal.aborted) break;
 
       chamber.appendChild(createFlowArrow('정보이사 검증 →'));
       statusText.textContent = `토론 모드${roundTag} · Gemini 정보이사 검증 중...`;
@@ -2070,6 +2136,7 @@ async function runMeeting(question, isFollowUp = false){
 
   isProcessing = false;
   sendBtn.disabled = false;
+  document.getElementById('stopBtn').style.display = 'none';
 }
 
 // ---------- 종합결론 생성 (회의 종료 또는 중간 정리 버튼에서만 호출) ----------
@@ -2147,12 +2214,15 @@ sendBtn.addEventListener('click', ()=>{
   const isFollowUp = meetingActive;
   runMeeting(fullQuestion, isFollowUp);
 });
-questionInput.addEventListener('keydown', (e)=>{
-  if(e.key === 'Enter' && !e.shiftKey){
-    e.preventDefault();
-    sendBtn.click();
+// ---------- 답변 중지 ----------
+document.getElementById('stopBtn').addEventListener('click', ()=>{
+  if(currentAbortController){
+    currentAbortController.abort();
   }
 });
+
+// Enter 키는 줄바꿈으로만 동작 (전송은 화살표 버튼으로만 가능)
+// 자동 높이 조절은 input 이벤트에서 별도로 처리됨
 
 loadKeys();
 
