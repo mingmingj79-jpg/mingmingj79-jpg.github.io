@@ -1794,6 +1794,7 @@ async function callClaude(systemPrompt, userPrompt){
         model: model,
         max_tokens: 1000,
         system: systemPrompt,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
         messages: [{ role: "user", content: userPrompt }]
       })
     });
@@ -1811,13 +1812,53 @@ async function callClaude(systemPrompt, userPrompt){
     throw new Error('Claude API 오류: ' + response.status);
   }
   const data = await response.json();
-  const textBlock = data.content.find(b => b.type === 'text');
-  return textBlock ? textBlock.text : '(응답 없음)';
+  // 웹검색 사용 시 여러 text 블록이 섞여 오므로 모두 이어붙임
+  const textBlocks = data.content.filter(b => b.type === 'text').map(b => b.text);
+  return textBlocks.length > 0 ? textBlocks.join('\n') : '(응답 없음)';
 }
 
 // ---------- GPT API call (real, may hit CORS) ----------
 async function callGPT(systemPrompt, userPrompt){
   if(!gptKey) return { error: 'NO_KEY' };
+  const model = perfMode === 'flagship' ? 'gpt-4o-search-preview' : 'gpt-4o-mini-search-preview';
+  try{
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + gptKey
+      },
+      signal: currentAbortController ? currentAbortController.signal : undefined,
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 800,
+        web_search_options: {},
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ]
+      })
+    });
+    if(!response.ok){
+      const errText = await response.text().catch(()=> '');
+      // 검색 전용 모델 호출이 막히면(구버전 키/권한 등) 일반 모델로 자동 재시도
+      if(response.status === 404 || response.status === 400){
+        return await callGPTFallback(systemPrompt, userPrompt);
+      }
+      return { error: 'API_ERROR', detail: response.status + ' ' + errText.slice(0,200) };
+    }
+    const data = await response.json();
+    return { text: data.choices[0].message.content };
+  }catch(e){
+    if(e.name === 'AbortError'){
+      return { error: 'ABORTED', detail: '회장님이 답변을 중지했습니다.' };
+    }
+    return { error: 'CORS_OR_NETWORK', detail: e.message };
+  }
+}
+
+// 검색 모델 호출 실패 시 일반 모델로 대체 호출 (웹검색 없이)
+async function callGPTFallback(systemPrompt, userPrompt){
   const model = perfMode === 'flagship' ? 'gpt-4o' : 'gpt-4o-mini';
   try{
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
