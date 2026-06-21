@@ -1246,21 +1246,51 @@ const ROLES = {
 };
 
 // ---------- 특정 임원 지목 감지 ----------
-// 회장이 한 명만 콕 집어 질문하면(예: "재무이사는~", "Claude 너는~") 그 임원만 답하도록 감지
+// 회장이 한 명만 콕 집어 "직접 호출"할 때만 그 임원 단독 답변 (예: "재무이사는 어때?", "Claude, 이거 봐줘")
+// "정보이사가 ~했다", "~에 대해" 처럼 단순히 임원을 언급/비유/인용하는 문장은 단독 지목으로 보지 않음
 const ROLE_KEYWORDS = {
   gpt: ['재무이사', 'gpt', 'GPT'],
   claude: ['개발이사', 'claude', 'Claude', '클로드'],
   gemini: ['정보이사', 'gemini', 'Gemini', '제미니', '제미나이']
 };
+// 임원 키워드 뒤에 이런 표현이 붙으면 "직접 부르는 것"으로 인정
+const DIRECT_CALL_PATTERNS = [
+  /(은|는|이|가)?\s*(어떻게|어떤|어디|왜|뭐|무엇|얼마)/,  // "재무이사는 어떻게 생각해?"
+  /(에게|한테)\s*(물어|질문|요청)/,                         // "정보이사에게 물어봐"
+  /^\s*[,，]/,                                              // "Claude, 이거 봐줘" (호출 쉼표)
+  /(너는|네|당신)/,                                          // "Claude 너는~"
+  /(의견|생각|답변)\s*(은|만|을|를)?\s*(줘|구해|말해|듣고)/  // "재무이사 의견만 줘"
+];
+// 임원 키워드 뒤에 이런 표현이 붙으면 "단순 언급/주어"로 보고 단독 지목 취소
+const MENTION_ONLY_PATTERNS = [
+  /(가|이)\s*(상정|제출|작성|보고|올린|올렸|말했|언급|제안)/, // "정보이사가 상정한 안건"
+  /(처럼|같이|비유|예를\s*들)/,                                // "정보이사처럼"
+  /(에\s*대해|관련해서|와\s*관련)/                             // 다른 임원도 같이 언급되는 맥락
+];
+
 function detectTargetedRole(text){
   const matched = [];
   for(const role in ROLE_KEYWORDS){
-    if(ROLE_KEYWORDS[role].some(kw => text.includes(kw))){
-      matched.push(role);
+    for(const kw of ROLE_KEYWORDS[role]){
+      const idx = text.indexOf(kw);
+      if(idx === -1) continue;
+      const after = text.slice(idx + kw.length, idx + kw.length + 20);
+      const before = text.slice(Math.max(0, idx - 5), idx);
+
+      // 단순 언급 패턴이 먼저 감지되면 이 임원은 단독지목 후보에서 제외
+      if(MENTION_ONLY_PATTERNS.some(p => p.test(after))){
+        continue;
+      }
+      // 직접 호출 패턴이 감지되면 후보로 추가
+      if(DIRECT_CALL_PATTERNS.some(p => p.test(after) || p.test(before))){
+        matched.push(role);
+      }
+      break; // 같은 role 안에서 키워드 중복 매칭 방지
     }
   }
-  // 정확히 한 임원만 언급된 경우에만 단일 지목으로 인정 (둘 이상이면 전체 토론으로 처리)
-  return matched.length === 1 ? matched[0] : null;
+  const unique = [...new Set(matched)];
+  // 정확히 한 임원만, 그것도 "직접 호출" 패턴으로 감지된 경우에만 단독 지목으로 인정
+  return unique.length === 1 ? unique[0] : null;
 }
 
 const MODE_CONTEXT = {
