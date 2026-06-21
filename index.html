@@ -784,6 +784,58 @@ body.has-dock{ padding-bottom: 140px; }
   display:flex; align-items:center; justify-content:center;
   cursor:pointer;
 }
+.reset-btn{
+  position:absolute; top:26px; right:60px;
+  width:34px;height:34px; border-radius:50%;
+  border:1px solid rgba(255,255,255,0.4); background:rgba(255,255,255,0.12);
+  color: #ffffff; font-size:16px;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer;
+}
+
+/* ===== 임원회의실 비밀번호 잠금 ===== */
+.lock-overlay{
+  position:fixed; inset:0; z-index:200;
+  background: linear-gradient(160deg, var(--green-dim), var(--green) 80%);
+  display:none; align-items:center; justify-content:center;
+  padding: 24px;
+}
+.lock-overlay.open{ display:flex; }
+.lock-box{
+  background:#fff; border-radius:18px;
+  padding: 32px 26px; max-width:340px; width:100%;
+  text-align:center;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+}
+.lock-seal{
+  width:56px;height:56px; border-radius:50%;
+  background: var(--green); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Noto Serif KR',serif; font-weight:900; font-size:22px;
+  margin: 0 auto 14px;
+}
+.lock-box h2{
+  font-family:'Noto Serif KR',serif; font-size:18px; margin:0 0 6px; color: var(--ink);
+}
+.lock-box p{
+  font-size:12.5px; color: var(--ink-soft); margin:0 0 18px; line-height:1.6;
+}
+.lock-box input{
+  width:100%; padding:12px 14px; border-radius:10px;
+  border:1px solid var(--rule); font-size:14px;
+  text-align:center; margin-bottom:12px; outline:none;
+  font-family:'Noto Sans KR',sans-serif;
+}
+.lock-box input:focus{ border-color: var(--green); }
+.lock-box button{
+  width:100%; padding:12px; border-radius:10px; border:none;
+  background: var(--green); color:#fff; font-size:14px; font-weight:700;
+  cursor:pointer; font-family:'Noto Sans KR',sans-serif;
+}
+.lock-box button:active{ opacity:.85; }
+.lock-error{
+  color:#c0392b; font-size:12px; margin-top:10px;
+}
 .history-btn{
   position:absolute; top:26px; left:16px;
   width:34px;height:34px; border-radius:50%;
@@ -932,10 +984,21 @@ body.has-dock{ padding-bottom: 140px; }
 </section>
 
 <!-- ===== AI 임원회의실 (기존 시스템) ===== -->
+<div class="lock-overlay" id="lockOverlay">
+  <div class="lock-box">
+    <div class="lock-seal">임</div>
+    <h2>AI 임원회의실</h2>
+    <p>비공개 공간입니다. 비밀번호를 입력해 주세요.</p>
+    <input type="password" id="lockPasswordInput" placeholder="비밀번호" autocomplete="off">
+    <button id="lockSubmitBtn">입장하기</button>
+    <div class="lock-error" id="lockError" style="display:none;">비밀번호가 올바르지 않습니다.</div>
+  </div>
+</div>
 <section class="page" id="page-execroom" style="display:none;">
 
 <div class="masthead">
   <div class="history-btn" id="historyBtn">☰</div>
+  <div class="reset-btn" id="resetBtn" title="회의실 초기화">⟲</div>
   <div class="gear" id="gearBtn">⚙</div>
   <div class="seal">임</div>
   <h1>AI 임원회의실</h1>
@@ -1345,6 +1408,30 @@ perfToggle.addEventListener('click', (e)=>{
 const settingsOverlay = document.getElementById('settingsOverlay');
 document.getElementById('gearBtn').addEventListener('click', ()=> settingsOverlay.classList.add('open'));
 document.getElementById('closeSettings').addEventListener('click', ()=> settingsOverlay.classList.remove('open'));
+
+// ---------- 회의실 초기화 ----------
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  if(isProcessing){
+    alert('임원진이 답변 중입니다. 완료 후 초기화해 주세요.');
+    return;
+  }
+  const confirmed = confirm('현재 회의 내용을 모두 지우고 처음 화면으로 돌아갑니다.\n(저장하지 않은 내용은 사라집니다. 계속할까요?)');
+  if(!confirmed) return;
+  chamber.innerHTML = '';
+  if(!emptyRoom.parentElement) chamber.appendChild(emptyRoom);
+  meetingHistory = [];
+  meetingActive = false;
+  currentAnswers = {};
+  statusStrip.classList.remove('live');
+  statusText.textContent = '대기 중';
+  questionInput.value = '';
+  questionInput.style.height = 'auto';
+  refdataInput.value = '';
+  refdataToggleBtn.classList.remove('has-data');
+  refdataToggleBtn.textContent = '📎 참고 데이터 첨부 (PRM 등)';
+  document.getElementById('refdataPanel').classList.remove('open');
+});
+
 document.getElementById('saveKeys').addEventListener('click', async ()=>{
   gptKey = document.getElementById('gptKey').value.trim();
   geminiKey = document.getElementById('geminiKey').value.trim();
@@ -2103,9 +2190,44 @@ function goToPage(pageName){
   // 임원회의실 페이지일 때만 하단 입력 dock 공간 확보
   document.body.classList.toggle('has-dock', pageName === 'execroom');
   if(pageName === 'products') renderProducts();
+  if(pageName === 'execroom') checkExecRoomLock();
   siteNav.classList.remove('open');
   window.scrollTo(0, 0);
 }
+
+// ---------- 임원회의실 비밀번호 잠금 ----------
+const EXECROOM_PASSWORD = '4814'; // 회장님 요청 시 이 값만 바꾸면 비밀번호 변경됨
+const lockOverlay = document.getElementById('lockOverlay');
+const lockPasswordInput = document.getElementById('lockPasswordInput');
+const lockSubmitBtn = document.getElementById('lockSubmitBtn');
+const lockError = document.getElementById('lockError');
+
+function checkExecRoomLock(){
+  const unlocked = sessionStorage.getItem('exec-room:unlocked') === 'true';
+  if(unlocked){
+    lockOverlay.classList.remove('open');
+  } else {
+    lockOverlay.classList.add('open');
+    lockPasswordInput.value = '';
+    lockError.style.display = 'none';
+    setTimeout(()=> lockPasswordInput.focus(), 100);
+  }
+}
+
+function attemptUnlock(){
+  if(lockPasswordInput.value === EXECROOM_PASSWORD){
+    sessionStorage.setItem('exec-room:unlocked', 'true');
+    lockOverlay.classList.remove('open');
+  } else {
+    lockError.style.display = 'block';
+    lockPasswordInput.value = '';
+    lockPasswordInput.focus();
+  }
+}
+lockSubmitBtn.addEventListener('click', attemptUnlock);
+lockPasswordInput.addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter') attemptUnlock();
+});
 
 document.querySelectorAll('.nav-link').forEach(link=>{
   link.addEventListener('click', (e)=>{
