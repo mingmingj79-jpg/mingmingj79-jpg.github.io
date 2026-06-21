@@ -917,6 +917,14 @@ body.has-dock{ padding-bottom: 140px; }
 }
 .history-delete-btn:active{ opacity:1; background: var(--paper-dim); }
 .history-empty{ text-align:center; color:var(--ink-soft); font-size:12.5px; padding: 30px 0; }
+.cleanup-btn{
+  width:100%; margin: 0 0 10px;
+  padding:9px; border-radius:9px;
+  background: var(--paper-dim); border:1px solid var(--rule);
+  color: var(--ink-soft); font-size:12px; font-weight:600;
+  cursor:pointer; font-family:'Noto Sans KR',sans-serif;
+}
+.cleanup-btn:active{ opacity:.7; }
 </style>
 </head>
 <body>
@@ -940,9 +948,8 @@ body.has-dock{ padding-bottom: 140px; }
 <!-- ===== 홈 페이지 ===== -->
 <section class="page" id="page-home">
   <div class="hero">
-    <div class="hero-badge">대구 동구 매일유업 공급 대리점</div>
-    <h1>매일 신선하게,<br>검단대리점</h1>
-    <p class="hero-desc">카페·베이커리·식당·소매점까지<br>대구 동구 일원에 매일유업 정품을 신속하고 신선하게 배송합니다.</p>
+    <h1>매일 신선하게,<br>매일유업 검단대리점</h1>
+    <p class="hero-desc">카페·베이커리·식당·소매점까지<br>매일유업 정품을 신속하고 신선하게 배송합니다.</p>
     <button class="hero-cta" data-goto="contact">거래 문의하기</button>
   </div>
 
@@ -1111,6 +1118,7 @@ body.has-dock{ padding-bottom: 140px; }
 <div class="sheet-overlay" id="historyOverlay">
   <div class="sheet">
     <h4>지난 회의록 <span class="close" id="closeHistory">닫기</span></h4>
+    <button class="cleanup-btn" id="cleanupBtn" style="display:none;">🧹 임시 회의록 일괄 정리</button>
     <div id="historyList"><div class="history-empty">불러오는 중...</div></div>
   </div>
 </div>
@@ -1396,7 +1404,9 @@ async function fetchAllMeetingRecords(){
 let pastMeetingsContext = ''; // 회의 시작 시 한 번 계산해서 재사용
 async function buildPastMeetingsContext(){
   try{
-    const records = await fetchAllMeetingRecords();
+    const allRecords = await fetchAllMeetingRecords();
+    // 정식으로 "회의 종료"된 기록만 참고 (잡담/임시 토론은 제외)
+    const records = allRecords.filter(r => r.endedByChairman);
     if(records.length === 0) return '';
     const recent = records.slice(0, 5); // 가장 최근 5건만 참고 (글자 수 제한 고려)
     const lines = recent.map(r => {
@@ -1404,7 +1414,7 @@ async function buildPastMeetingsContext(){
       const concl = r.conclusion ? r.conclusion.slice(0, 150) : '';
       return `- [${date}] 안건: ${r.question.slice(0,120)}${concl ? ' / 결론: ' + concl : ''}`;
     });
-    return '\n\n[과거 회의 이력 참고 - 최근 ' + recent.length + '건]\n' + lines.join('\n') + '\n위 과거 이력과 모순되지 않게, 또는 필요시 이전 결정을 언급하며 답변하라. 단, 과거 이력은 참고용일 뿐 현재 안건이 우선이다.';
+    return '\n\n[과거 회의 이력 참고 - 정식 종료된 회의 중 최근 ' + recent.length + '건]\n' + lines.join('\n') + '\n위 과거 이력과 모순되지 않게, 또는 필요시 이전 결정을 언급하며 답변하라. 단, 과거 이력은 참고용일 뿐 현재 안건이 우선이다.';
   }catch(e){
     return '';
   }
@@ -1412,17 +1422,29 @@ async function buildPastMeetingsContext(){
 
 async function loadHistory(){
   const listEl = document.getElementById('historyList');
+  const cleanupBtn = document.getElementById('cleanupBtn');
   try{
     const records = await fetchAllMeetingRecords();
 
     if(records.length===0){
       listEl.innerHTML = '<div class="history-empty">아직 저장된 회의록이 없습니다.</div>';
+      cleanupBtn.style.display = 'none';
       return;
     }
+
+    // 정식 종료되지 않은 임시 기록이 있으면 일괄정리 버튼 노출
+    const tempCount = records.filter(r => !r.endedByChairman).length;
+    if(tempCount > 0){
+      cleanupBtn.style.display = '';
+      cleanupBtn.textContent = `🧹 임시 회의록 일괄 정리 (${tempCount}건)`;
+    } else {
+      cleanupBtn.style.display = 'none';
+    }
+
     listEl.innerHTML = records.map(r => `
       <div class="history-item">
         <button class="history-delete-btn" data-id="${escapeHtml(r.id)}" title="회의록 삭제">🗑</button>
-        <div class="h-top"><span class="tag">${r.mode}${r.discussMode ? ' · 토론' : ''}${r.perfMode === 'mini' ? ' · 가성비' : ''}${r.endedByChairman ? ' · 종료됨' : ''}</span></div>
+        <div class="h-top"><span class="tag">${r.mode}${r.discussMode ? ' · 토론' : ''}${r.perfMode === 'mini' ? ' · 가성비' : ''}${r.endedByChairman ? ' · 종료됨' : ' · 임시'}</span></div>
         <div class="h-q">${escapeHtml(r.question)}</div>
         <div class="h-date">${new Date(r.timestamp).toLocaleString('ko-KR')}</div>
       </div>
@@ -1442,8 +1464,21 @@ async function loadHistory(){
   }catch(e){
     console.error('loadHistory error', e);
     listEl.innerHTML = '<div class="history-empty">불러오기 실패</div>';
+    cleanupBtn.style.display = 'none';
   }
 }
+
+document.getElementById('cleanupBtn').addEventListener('click', async ()=>{
+  const records = await fetchAllMeetingRecords();
+  const tempRecords = records.filter(r => !r.endedByChairman);
+  if(tempRecords.length === 0) return;
+  const confirmed = confirm(`회의 종료로 저장되지 않은 임시 회의록 ${tempRecords.length}건을 모두 삭제할까요?\n("회의 종료·저장"으로 정식 마무리된 회의록은 남습니다.)`);
+  if(!confirmed) return;
+  for(const r of tempRecords){
+    await deleteMeetingRecord(r.id);
+  }
+  loadHistory();
+});
 
 async function deleteMeetingRecord(id){
   const key = 'exec-room:meeting:' + id;
@@ -2061,16 +2096,7 @@ async function runMeeting(question, isFollowUp = false){
     meetingActive = true;
     currentAnswers = answers;
 
-    await saveMeetingRecord({
-      id: Date.now().toString(),
-      timestamp: Date.now(),
-      mode: currentMode,
-      discussMode: discussMode,
-      perfMode: perfMode,
-      question: question,
-      answers: answers,
-      targetedRole: targetedRole
-    });
+    // 단독 지목 답변은 정식 회의가 아니므로 자동저장하지 않음 (잡담성 질문 데이터 축적 방지)
 
     isProcessing = false;
     sendBtn.disabled = false;
@@ -2218,16 +2244,8 @@ async function runMeeting(question, isFollowUp = false){
     meetingHistory = [];
   });
 
-  // save record (자동 임시 저장 - 라운드마다, 결론 없이 답변만)
-  await saveMeetingRecord({
-    id: Date.now().toString(),
-    timestamp: Date.now(),
-    mode: currentMode,
-    discussMode: discussMode,
-    perfMode: perfMode,
-    question: question,
-    answers: answers
-  });
+  // 라운드마다 자동저장은 하지 않음. 회의록은 "회의 종료 · 저장" 버튼을 눌러야만 정식 저장됨
+  // (잡담/임시 토론까지 데이터로 쌓이는 것을 방지하기 위함)
 
   isProcessing = false;
   sendBtn.disabled = false;
